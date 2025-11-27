@@ -1,6 +1,8 @@
-import asyncio
+import time
 from enum import Enum
 import logging
+from typing import Literal
+from urllib.request import urlopen
 
 import fastapi
 
@@ -11,15 +13,28 @@ app = fastapi.FastAPI()
 logger = logging.getLogger(__name__)
 
 # ===============
+# LIGHTS MGMT
+# ===============
+class Light(Enum):
+    BUILDING_1      = "http://172.22.22.11"
+    BUILDING_2      = "http://172.22.22.12"
+    BUILDING_3      = "http://172.22.22.13"
+    BUILDING_4      = "http://172.22.22.14"
+
+def manage_light(action: Literal['On', 'Off', 'TOGGLE'], light: Light):
+    urlopen(f"{light.value}/cm?cmnd=Power%20{action}").read()
+
+# ===============
 # PLC CONFIG & HELPERS
 # ===============
 class OffsetKey(Enum):
-    BUILDING_1 = 0x138
-    BUILDING_2 = 0x139
-    BUILDING_3 = 0x13A
-    BUILDING_4 = 0x13B
-    CELEBRATE = 0x13C
+    BUILDING_1      = 0x138
+    BUILDING_2      = 0x139
+    BUILDING_3      = 0x13A
+    BUILDING_4      = 0x13B
+    CELEBRATE       = 0x13C
     CLEAN_BUILDINGS = 0x13D
+    IDLE            = 0x13E
 
 def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138) -> bool:
     """Writes a boolean to the output symbol and returns the readback."""
@@ -37,8 +52,7 @@ def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x1
         return symbol.read()
 
 def activate_only(target: OffsetKey):
-    """Stop idle and activate the target output."""
-    idle_stop_event.set()  # stop idle loop immediately
+    """Activate the target output."""
     for key in OffsetKey:
         write_output(key == target, index_offset=key.value)
     return {"led_status": True}
@@ -46,85 +60,56 @@ def activate_only(target: OffsetKey):
 
 
 # ===============
-# IDLE MANAGEMENT
-# ===============
-idle_stop_event = asyncio.Event()
-idle_started = False
-
-async def idle_loop():
-    """Continuously turns off all outputs until stopped."""
-    global idle_started
-
-    if not idle_stop_event.is_set(): logger.warning("Idle state - action started")
-
-    while not idle_stop_event.is_set():
-        logger.warning("Idle state - action triggered")
-
-        for key in OffsetKey:
-            write_output(False, index_offset=key.value)
-        await asyncio.sleep(1)  # small sleep to avoid blocking the event loop
-
-    logger.warning("Idle state - stopped")
-    idle_started = False  # allow it to be started again if needed
-
-
-
-
-# ===============
-# MIDDLEWARE
-# ===============
-@app.middleware("http")
-async def stop_idle_for_other_endpoints(request: fastapi.Request, call_next):
-    """Stops the idle loop for ANY endpoint except /idle."""
-    if request.url.path != "/idle":
-        idle_stop_event.set()
-    response = await call_next(request)
-    return response
-
-
-
-# ===============
 # ROUTES
 # ===============
-@app.get("/idle")
-async def idle(background_tasks: fastapi.BackgroundTasks):
-    """Start idle loop in background (can only run once)."""
-    global idle_started
-
-    if idle_started: return { "status": "idle already running" }
-
-    idle_started = True
-    idle_stop_event.clear()
-    background_tasks.add_task(idle_loop)
-
-    return { "status": "idle started" }
-
-
 @app.get("/place-building-1")
 def place_building_1():
-    return activate_only(OffsetKey.BUILDING_1)
+    activate_only(OffsetKey.BUILDING_1)
+    manage_light('On', Light.BUILDING_1)
 
 
 @app.get("/place-building-2")
 def place_building_2():
-    return activate_only(OffsetKey.BUILDING_2)
+    activate_only(OffsetKey.BUILDING_2)
+    manage_light('On', Light.BUILDING_2)
 
 
 @app.get("/place-building-3")
 def place_building_3():
-    return activate_only(OffsetKey.BUILDING_3)
+    activate_only(OffsetKey.BUILDING_3)
+    manage_light('On', Light.BUILDING_3)
+
 
 
 @app.get("/place-building-4")
 def place_building_4():
-    return activate_only(OffsetKey.BUILDING_4)
+    activate_only(OffsetKey.BUILDING_4)
+    manage_light('On', Light.BUILDING_4)
 
 
 @app.get("/celebrate")
 def celebrate():
-    return activate_only(OffsetKey.CELEBRATE)
+    activate_only(OffsetKey.CELEBRATE)
 
+    # lights animation
+    for i in range(3):
+        for light in Light:
+            manage_light("TOGGLE", light)
+            time.sleep(0.25)  # stagger by half a second
+
+    # reset
+    for light in Light: manage_light("Off", light)
 
 @app.get("/clean-buildings")
 def clean_buildings():
-    return activate_only(OffsetKey.CLEAN_BUILDINGS)
+    activate_only(OffsetKey.CLEAN_BUILDINGS)
+    manage_light('Off', Light.BUILDING_1)
+    manage_light('Off', Light.BUILDING_2)
+    manage_light('Off', Light.BUILDING_3)
+    manage_light('Off', Light.BUILDING_4)
+
+
+@app.get("/idle")
+async def idle():
+    """Start the idle loop action, managed by the robot directly"""
+    return activate_only(OffsetKey.IDLE)
