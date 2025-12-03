@@ -7,7 +7,7 @@ from urllib.request import urlopen
 import fastapi
 
 import pyads
-
+from pyads import ADSError
 
 app = fastapi.FastAPI()
 logger = logging.getLogger(__name__)
@@ -36,20 +36,24 @@ class OffsetKey(Enum):
     CLEAN_BUILDINGS = 0x13D
     IDLE            = 0x13E
 
-def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138) -> bool:
+def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138) -> bool | None:
     """Writes a boolean to the output symbol and returns the readback."""
     ams_net_id = "5.98.172.87.1.1"
     ams_port = 27905
 
     with pyads.Connection(ams_net_id, ams_port) as plc:
-        symbol = plc.get_symbol(
-            index_group=index_group,
-            index_offset=index_offset,
-            plc_datatype=pyads.PLCTYPE_BOOL,
-        )
+        try:
+            symbol = plc.get_symbol(
+                index_group=index_group,
+                index_offset=index_offset,
+                plc_datatype=pyads.PLCTYPE_BOOL,
+            )
 
-        symbol.write(value)
-        return symbol.read()
+            symbol.write(value)
+            return symbol.read()
+        except ADSError as e:
+            logger.error(f"Error writing output to index group '{index_group} at index offset '{index_offset}': {e}")
+            return None
 
 def activate_only(target: OffsetKey):
     """Activate the target output."""

@@ -1,0 +1,11 @@
+<service>
+  <id>ServeurVitrinePython</id>
+  <name>Serveur Vitrine Python</name>
+  <description>FastAPI server for KUKA and lamps</description>
+  <executable>C:\serveur-vitrine\.venv\Scripts\python.exe</executable>
+  <arguments>-m uvicorn main:app --host 0.0.0.0 --port 8000</arguments>
+  <workingdirectory>C:\serveur-vitrine</workingdirectory>
+  <logpath>C:\serveur-vitrine\logs</logpath>
+  <log mode="roll-by-size" sizeThreshold="10240"/>
+  <onfailure action="restart" delay="5000"/>
+</service>
