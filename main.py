@@ -1,3 +1,4 @@
+import random
 import time
 from enum import Enum
 import logging
@@ -24,6 +25,7 @@ class Light(Enum):
 def manage_light(action: Literal['On', 'Off', 'TOGGLE'], light: Light):
     urlopen(f"{light.value}/cm?cmnd=Power%20{action}").read()
 
+
 # ===============
 # PLC CONFIG & HELPERS
 # ===============
@@ -36,7 +38,7 @@ class OffsetKey(Enum):
     CLEAN_BUILDINGS = 0x13D
     IDLE            = 0x13E
 
-def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138) -> bool | None:
+def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138):
     """Writes a boolean to the output symbol and returns the readback."""
     ams_net_id = "5.98.172.87.1.1"
     ams_port = 27905
@@ -50,16 +52,27 @@ def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x1
             )
 
             symbol.write(value)
-            return symbol.read()
+            time.sleep(3)
+            symbol.write(False)
+
         except ADSError as e:
             logger.error(f"Error writing output to index group '{index_group} at index offset '{index_offset}': {e}")
-            return None
 
 def activate_only(target: OffsetKey):
     """Activate the target output."""
     for key in OffsetKey:
         write_output(key == target, index_offset=key.value)
+
     return {"led_status": True}
+
+
+
+def desactivate_only(target: OffsetKey):
+    """Desactivate the target output."""
+    for key in OffsetKey:
+        write_output(key == target, index_offset=key.value)
+    return {"led_status": False}
+
 
 
 
@@ -98,11 +111,28 @@ def celebrate():
     # lights animation
     for i in range(3):
         for light in Light:
-            manage_light("TOGGLE", light)
+            manage_light("Off", light)
             time.sleep(0.25)  # stagger by half a second
+            manage_light("On", light)
 
     # reset
-    for light in Light: manage_light("Off", light)
+    for light in Light: manage_light("On", light)
+
+@app.get("/celebrate-2")
+def celebrate_special():
+    activate_only(OffsetKey.CELEBRATE)
+
+    # lights animation
+    for i in range(20):
+        for j in range(len(Light)):
+            # get a random light
+            light = random.choice(list(Light))
+            manage_light("Off", light)
+            time.sleep(0.025)  # stagger by half a second
+            manage_light("On", light)
+
+    # reset
+    for light in Light: manage_light("On", light)
 
 @app.get("/clean-buildings")
 def clean_buildings():
@@ -111,7 +141,6 @@ def clean_buildings():
     manage_light('Off', Light.BUILDING_2)
     manage_light('Off', Light.BUILDING_3)
     manage_light('Off', Light.BUILDING_4)
-
 
 @app.get("/idle")
 async def idle():
