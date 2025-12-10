@@ -1,77 +1,160 @@
 import random
+import threading
 import time
-from enum import Enum
+from enum import IntEnum, StrEnum
 import logging
-from typing import Literal
 from urllib.request import urlopen
 
 import fastapi
 
 import pyads
+from fastapi import BackgroundTasks
 from pyads import ADSError
 
 app = fastapi.FastAPI()
 logger = logging.getLogger(__name__)
 
+app.state.BUILDINGS_PLACED = []
+app.state.ROBOT_IS_MOVING = False
+
+
 # ===============
 # LIGHTS MGMT
 # ===============
-class Light(Enum):
+class LightAction(StrEnum):
+    On = "On"
+    Off = "Off"
+    TOGGLE = "TOGGLE"
+
+class Light(StrEnum):
     BUILDING_1      = "http://172.22.22.11"
     BUILDING_2      = "http://172.22.22.12"
     BUILDING_3      = "http://172.22.22.13"
     BUILDING_4      = "http://172.22.22.14"
 
-def manage_light(action: Literal['On', 'Off', 'TOGGLE'], light: Light):
-    urlopen(f"{light.value}/cm?cmnd=Power%20{action}").read()
+    @classmethod
+    def get_building_from_number(cls, num: int):
+        if num not in range(1, 5):
+            raise ValueError("Number must be between 1 and 4.")
+        return getattr(cls, f"BUILDING_{num}")
+
+def manage_light(action: LightAction, light: Light, blocking: bool = True):
+    def callback():
+        logger.warning(f"Managing light '{light.name}' with action '{action.value}'")
+        urlopen(f"{light.value}/cm?cmnd=Power%20{action.value}").read()
+
+    if blocking:
+        callback()
+    else:
+        thread = threading.Thread(
+            target=callback,
+            daemon=True
+        )
+        thread.start()
 
 
 # ===============
 # PLC CONFIG & HELPERS
 # ===============
-class OffsetKey(Enum):
-    BUILDING_1      = 0x138
-    BUILDING_2      = 0x139
-    BUILDING_3      = 0x13A
-    BUILDING_4      = 0x13B
-    CELEBRATE       = 0x13C
-    CLEAN_BUILDINGS = 0x13D
-    IDLE            = 0x13E
+AMS_NET_ID = "5.98.172.87.1.1"
+AMS_PORT = 27905
+WRITE_INDEX_GROUP = 0xF021
+READ_INDEX_GROUP = 0xF031
 
-def write_output(value: bool, index_group: int = 0xF021, index_offset: int = 0x138):
-    """Writes a boolean to the output symbol and returns the readback."""
-    ams_net_id = "5.98.172.87.1.1"
-    ams_port = 27905
 
-    with pyads.Connection(ams_net_id, ams_port) as plc:
-        try:
+class ReadOffsetKey(IntEnum):
+    ACTION_FINISHED     = 0x1A8
+
+
+class WriteOffsetKey(IntEnum):
+    BUILDING_1          = 0x138
+    BUILDING_2          = 0x139
+    BUILDING_3          = 0x13A
+    BUILDING_4          = 0x13B
+    CELEBRATE           = 0x13C
+    IDLE                = 0x13E
+    CLEAN_BUILDING_1    = 0x13F
+    CLEAN_BUILDING_2    = 0x140
+    CLEAN_BUILDING_3    = 0x141
+    CLEAN_BUILDING_4    = 0x142
+
+
+    @classmethod
+    def get_building_from_number(cls, num: int):
+        if num not in range(1, 5):
+            raise ValueError("Number must be between 1 and 4.")
+        return getattr(cls, f"BUILDING_{num}")
+
+    @classmethod
+    def get_clean_buildings_from_number(cls, num: int):
+        if num not in range(1, 5):
+            raise ValueError("Number must be between 1 and 4.")
+        return getattr(cls, f"CLEAN_BUILDING_{num}")
+
+
+def wait_for_plc_action_to_finish(index_offset: ReadOffsetKey = ReadOffsetKey.ACTION_FINISHED):
+    action_is_finished = False
+
+    try:
+        with pyads.Connection(AMS_NET_ID, AMS_PORT) as plc:
             symbol = plc.get_symbol(
-                index_group=index_group,
-                index_offset=index_offset,
+                index_group=READ_INDEX_GROUP,
+                index_offset=index_offset.value,
+                plc_datatype=pyads.PLCTYPE_BOOL,
+            )
+
+            logger.warning(f"Index group '{READ_INDEX_GROUP}' at index offset '{index_offset.name}' ({index_offset.value}) - waiting for action to finish")
+
+            while not action_is_finished:
+                # listen for the action to finish
+                action_is_finished = symbol.read()
+                time.sleep(0.5)
+
+            logger.warning(f"Index group '{READ_INDEX_GROUP}' at index offset '{index_offset.name}' ({index_offset.value}) - action finished")
+
+
+    except ADSError as e:
+        logger.error(f"Error writing output to index group '{WRITE_INDEX_GROUP} at index offset '{index_offset.name}' ({index_offset.value}): {e}")
+
+
+
+def write_output(
+        value: bool,
+        index_offset: WriteOffsetKey | ReadOffsetKey,
+        wait_until_finish: bool = False
+):
+    """Writes a boolean to the output symbol and returns the readback."""
+
+    try:
+        with pyads.Connection(AMS_NET_ID, AMS_PORT) as plc:
+            logger.warning(f"Index group '{WRITE_INDEX_GROUP}' at index offset '{index_offset.name}' ({index_offset.value}) - writing output '{value}'")
+
+            symbol = plc.get_symbol(
+                index_group=WRITE_INDEX_GROUP,
+                index_offset=index_offset.value,
                 plc_datatype=pyads.PLCTYPE_BOOL,
             )
 
             symbol.write(value)
-            time.sleep(3)
-            symbol.write(False)
 
-        except ADSError as e:
-            logger.error(f"Error writing output to index group '{index_group} at index offset '{index_offset}': {e}")
+            # if the value was set to 'True', it needs to be reset to 'False' to avoid an infinite loop
+            if value:
+                if wait_until_finish: wait_for_plc_action_to_finish()
+                symbol.write(False)
+                logger.warning(f"Index group '{WRITE_INDEX_GROUP}' at index offset '{index_offset.name}' ({index_offset.value}) - writing output 'False'")
 
-def activate_only(target: OffsetKey):
+    except ADSError as e:
+        logger.error(f"Error writing output to index group '{WRITE_INDEX_GROUP} at index offset '{index_offset.name}' ({index_offset.value}): {e}")
+
+def activate_only(target: WriteOffsetKey, wait_until_finish: bool = False):
     """Activate the target output."""
-    for key in OffsetKey:
-        write_output(key == target, index_offset=key.value)
+    for key in WriteOffsetKey:
+        if key == target:
+            write_output(value=True, index_offset=key, wait_until_finish=wait_until_finish)
+        else:
+            write_output(value=False, index_offset=key)
 
-    return {"led_status": True}
 
-
-
-def desactivate_only(target: OffsetKey):
-    """Desactivate the target output."""
-    for key in OffsetKey:
-        write_output(key == target, index_offset=key.value)
-    return {"led_status": False}
 
 
 
@@ -79,70 +162,113 @@ def desactivate_only(target: OffsetKey):
 # ===============
 # ROUTES
 # ===============
-@app.get("/place-building-1")
-def place_building_1():
-    activate_only(OffsetKey.BUILDING_1)
-    manage_light('On', Light.BUILDING_1)
+def create_building_route(building_id: int, write_key, light):
+    def route(background_tasks: BackgroundTasks):
+        if app.state.ROBOT_IS_MOVING:
+            logger.warning("The robot is currently moving. Please wait until it finishes.")
+            return
 
+        def callback():
+            app.state.ROBOT_IS_MOVING = True
 
-@app.get("/place-building-2")
-def place_building_2():
-    activate_only(OffsetKey.BUILDING_2)
-    manage_light('On', Light.BUILDING_2)
+            activate_only(write_key, wait_until_finish=True)
+            manage_light(LightAction.On, light)
+            app.state.BUILDINGS_PLACED.append(building_id)
 
+            app.state.ROBOT_IS_MOVING = False
 
-@app.get("/place-building-3")
-def place_building_3():
-    activate_only(OffsetKey.BUILDING_3)
-    manage_light('On', Light.BUILDING_3)
+        background_tasks.add_task(callback)
 
+    return route
 
+app.get("/place-building-1")(create_building_route(1, WriteOffsetKey.BUILDING_1, Light.BUILDING_1))
+app.get("/place-building-2")(create_building_route(2, WriteOffsetKey.BUILDING_2, Light.BUILDING_2))
+app.get("/place-building-3")(create_building_route(3, WriteOffsetKey.BUILDING_3, Light.BUILDING_3))
+app.get("/place-building-4")(create_building_route(4, WriteOffsetKey.BUILDING_4, Light.BUILDING_4))
 
-@app.get("/place-building-4")
-def place_building_4():
-    activate_only(OffsetKey.BUILDING_4)
-    manage_light('On', Light.BUILDING_4)
+@app.get("/lights-off")
+def lights_off(background_tasks: BackgroundTasks):
+    def callback():
+        for light in Light: manage_light(LightAction.Off, light, blocking=False)
 
+    background_tasks.add_task(callback)
 
 @app.get("/celebrate")
-def celebrate():
-    activate_only(OffsetKey.CELEBRATE)
+def celebrate(background_tasks: BackgroundTasks):
+    def callback():
+        # robot used to be moving for this
+        # activate_only(WriteOffsetKey.CELEBRATE)
 
-    # lights animation
-    for i in range(3):
-        for light in Light:
-            manage_light("Off", light)
-            time.sleep(0.25)  # stagger by half a second
-            manage_light("On", light)
+        # lights animation
+        for i in range(3):
+            for light in Light:
+                manage_light(LightAction.Off, light)
+                time.sleep(0.25)  # stagger by half a second
+                manage_light(LightAction.On, light)
 
-    # reset
-    for light in Light: manage_light("On", light)
+        # reset
+        for light in Light: manage_light(LightAction.On, light)
+
+    background_tasks.add_task(callback)
 
 @app.get("/celebrate-2")
-def celebrate_special():
-    activate_only(OffsetKey.CELEBRATE)
+def celebrate_special(background_tasks: BackgroundTasks):
+    def callback():
+        # robot used to be moving for this
+        # activate_only(WriteOffsetKey.CELEBRATE)
 
-    # lights animation
-    for i in range(20):
-        for j in range(len(Light)):
-            # get a random light
-            light = random.choice(list(Light))
-            manage_light("Off", light)
-            time.sleep(0.025)  # stagger by half a second
-            manage_light("On", light)
+        # lights animation
+        for i in range(20):
+            for j in range(len(Light)):
+                # get a random light
+                light = random.choice(list(Light))
+                manage_light(LightAction.Off, light)
+                time.sleep(0.025)  # stagger by half a second
+                manage_light(LightAction.On, light)
 
-    # reset
-    for light in Light: manage_light("On", light)
+        # reset
+        for light in Light: manage_light(LightAction.On, light)
+
+    background_tasks.add_task(callback)
+
 
 @app.get("/clean-buildings")
-def clean_buildings():
-    activate_only(OffsetKey.CLEAN_BUILDINGS)
-    manage_light('Off', Light.BUILDING_1)
-    manage_light('Off', Light.BUILDING_2)
-    manage_light('Off', Light.BUILDING_3)
-    manage_light('Off', Light.BUILDING_4)
+def clean_buildings(background_tasks: BackgroundTasks):
+    """
+    Clean the buildings that were placed automatically.
+    """
 
-@app.get("/idle")
-async def idle():
-    """Start the idle loop action, managed by the robot directly"""
-    return activate_only(OffsetKey.IDLE)
+    if len(app.state.BUILDINGS_PLACED) == 0:
+        logger.warning("No buildings were placed yet.")
+        return
+
+    if app.state.ROBOT_IS_MOVING:
+        logger.warning("The robot is currently moving. Please wait until it finishes.")
+        return
+
+    app.state.BUILDINGS_PLACED.sort()
+    logger.warning(f"Cleaning buildings: {app.state.BUILDINGS_PLACED}")
+
+    def callback():
+        """
+        build the lights and offset_keys arrays
+        """
+
+        app.state.ROBOT_IS_MOVING = True
+
+        for i in app.state.BUILDINGS_PLACED:
+            light = Light.get_building_from_number(i)
+            offset_key = WriteOffsetKey.get_clean_buildings_from_number(i)
+
+            write_output(True, index_offset=offset_key, wait_until_finish=True)
+            manage_light(LightAction.Off, light, blocking=False)
+
+            # wait for the input to be reset to 'False', otherwise the next clean action will be
+            # skipped (as the output is still 'True')
+            time.sleep(2)
+
+        # reset the BUILDINGS_PLACED array
+        app.state.BUILDINGS_PLACED = []
+        app.state.ROBOT_IS_MOVING = False
+
+    background_tasks.add_task(callback)
