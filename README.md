@@ -1,15 +1,43 @@
+---
+geometry: margin=2cm
+---
+
 # Vitrine 2025
 
-## Librairies
+## Paraméter le PLC après un redémarrage
 
-Pour intéragir avec le PLC du robot KUKA, utiliser la librairie [pyads](https://pyads.readthedocs.io/en/latest/quickstart.html)
+1 - Allumez le PLC
 
-Le PLC tourne sur Windows 10 IOT
+2 - Allumez le mini PLC (c'est lui qui contrôle le PLC)
+
+3 - Sur le mini PLC, ouvrez le logiciel TcXaeShell (icône jaune dans la barre de menu) :
+
+![](docs/Icône%20TcXaeShell.jpg)
+
+4 - Ouvrez le projet "Projet_Vitrine.sln" :
+
+![](docs/projet_vitrine.jpg)
+
+5 - Cliquez sur le bouton "Activate Configuration" : 
+
+![](docs/bouton_activate_configuration.jpg)
+
+Appuyez sur OK à chaque popup.
+
+6 - Cliquez sur "Restart TwinCAT (Config Mode)" :
+
+![](docs/bouton_restart_twincat.jpg)
+
+Appuyez sur OK à chaque popup.
+
+7 - ???
+
+8 - PROFIT
 
 ## Interrupteurs Tasmota
 
 | Numéro | Adresse IP (réseau de l'Antenne) | Adresse MAC       |
-| ------ | -------------------------------- | ----------------- |
+|--------|----------------------------------|-------------------|
 | 1      | 172.22.22.11                     | 2c:bc:bb:d5:ec:18 |
 | 2      | 172.22.22.12                     | 2c:bc:bb:d5:b5:ac |
 | 3      | 172.22.22.13                     | 2c:bc:bb:d7:6d:cc |
@@ -20,7 +48,3 @@ Allumer un interrupteur: `<adresse_ip>/cm?cmnd=Power%20On`
 Éteindre un interrupteur: `<adresse_ip>/cm?cmnd=Power%20Off`
 
 Basculer on/off un interrupteur: `<adresse_ip>/cm?cmnd=Power%20TOGGLE`
-
-```
-
-```
