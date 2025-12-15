@@ -1,16 +1,25 @@
----
-geometry: margin=2cm
----
-
 # Vitrine 2025
 
-## Paraméter le PLC après un redémarrage
+## Maintenance de la vitrine
+
+### Redémarrer / éteindre le serveur python  (ce projet)
+
+Afin d'empêcher d'avoir des signaux allumés, le endpoint `/clean-all-unsafe` peut être appelé avant d'arrêter le serveur. Cet endpoint effectue les actions suivantes :
+- Écrit `False` sur tous les offset : **le robot fini l'action en cours, puis ne bouge plus**.
+- Remet les états à zéro : enlève toutes les valeurs du tableau `BUILDINGS_PLACED` et change la valeur de `ROBOT_IS_MOVING` à `False`. Cela indique au serveur que la vitrine est dans son état de départ.
+
+```bash
+# Depuis la ligne de commande (Powershell / Bash)
+curl http://172.22.22.10:8000/clean-all-unsafe
+```
+
+### Redémarrer le projet sur le PLC depuis le mini PC
 
 1 - Allumez le PLC
 
-2 - Allumez le mini PLC (c'est lui qui contrôle le PLC)
+2 - Allumez le mini PC (c'est lui qui contrôle le PLC)
 
-3 - Sur le mini PLC, ouvrez le logiciel TcXaeShell (icône jaune dans la barre de menu) :
+3 - Sur le mini PC, ouvrez le logiciel TcXaeShell (icône jaune dans la barre de menu) :
 
 ![](docs/Icône%20TcXaeShell.jpg)
 
