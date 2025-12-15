@@ -12,7 +12,9 @@ from fastapi import BackgroundTasks
 from pyads import ADSError
 
 app = fastapi.FastAPI()
+formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s")
 logger = logging.getLogger(__name__)
+logger.formatter = formatter
 
 app.state.BUILDINGS_PLACED = []
 app.state.ROBOT_IS_MOVING = False
@@ -165,7 +167,7 @@ def activate_only(target: WriteOffsetKey, wait_until_finish: bool = False):
 def create_building_route(building_id: int, write_key, light):
     def route(background_tasks: BackgroundTasks):
         if app.state.ROBOT_IS_MOVING:
-            logger.warning("The robot is currently moving. Please wait until it finishes.")
+            logger.warning(f"/place-building-{building_id} - The robot is currently moving. Please wait until it finishes.")
             return
 
         def callback():
@@ -195,9 +197,16 @@ def lights_off(background_tasks: BackgroundTasks):
 
 @app.get("/celebrate")
 def celebrate(background_tasks: BackgroundTasks):
+    if app.state.ROBOT_IS_MOVING:
+        logger.warning("/celebrate - The robot is currently moving. Please wait until it finishes.")
+        return
+
     def callback():
         # robot used to be moving for this
-        # activate_only(WriteOffsetKey.CELEBRATE)
+        app.state.ROBOT_IS_MOVING = True
+        activate_only(WriteOffsetKey.CELEBRATE, wait_until_finish=True)
+        app.state.ROBOT_IS_MOVING = False
+
 
         # lights animation
         for i in range(3):
@@ -213,9 +222,14 @@ def celebrate(background_tasks: BackgroundTasks):
 
 @app.get("/celebrate-2")
 def celebrate_special(background_tasks: BackgroundTasks):
+    if app.state.ROBOT_IS_MOVING:
+        logger.warning("/celebrate-2 - The robot is currently moving. Please wait until it finishes.")
+        return
+
     def callback():
-        # robot used to be moving for this
-        # activate_only(WriteOffsetKey.CELEBRATE)
+        app.state.ROBOT_IS_MOVING = True
+        activate_only(WriteOffsetKey.CELEBRATE, wait_until_finish=True)
+        app.state.ROBOT_IS_MOVING = False
 
         # lights animation
         for i in range(20):
@@ -239,15 +253,16 @@ def clean_buildings(background_tasks: BackgroundTasks):
     """
 
     if len(app.state.BUILDINGS_PLACED) == 0:
-        logger.warning("No buildings were placed yet.")
+        logger.warning("/clean-buildings - No buildings were placed yet.")
         return
 
     if app.state.ROBOT_IS_MOVING:
-        logger.warning("The robot is currently moving. Please wait until it finishes.")
+        logger.warning("/clean-buildings - The robot is currently moving. Please wait until it finishes.")
         return
 
+    app.state.BUILDINGS_PLACED = list(set(app.state.BUILDINGS_PLACED))
     app.state.BUILDINGS_PLACED.sort()
-    logger.warning(f"Cleaning buildings: {app.state.BUILDINGS_PLACED}")
+    logger.warning(f"/clean-buildings - Cleaning buildings: {app.state.BUILDINGS_PLACED}")
 
     def callback():
         """
@@ -272,3 +287,16 @@ def clean_buildings(background_tasks: BackgroundTasks):
         app.state.ROBOT_IS_MOVING = False
 
     background_tasks.add_task(callback)
+
+
+@app.get("/clean-all-unsafe")
+def clean_all_unsafe():
+    """
+    Writes 'False' to all output symbols.
+    Also sets ROBOT_IS_MOVING state to 'False', clears BUILDINGS_PLACED state to be empty.
+    """
+    app.state.BUILDINGS_PLACED = []
+    app.state.ROBOT_IS_MOVING = False
+
+    for index_offset in WriteOffsetKey:
+        write_output(value=False, index_offset=index_offset)
