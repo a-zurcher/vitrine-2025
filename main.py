@@ -12,9 +12,13 @@ from fastapi import BackgroundTasks
 from pyads import ADSError
 
 app = fastapi.FastAPI()
-formatter = logging.Formatter("%(asctime)s;%(levelname)s;%(message)s")
+
+# logging
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s", "%Y-%m-%d %H:%M:%S"))
 logger = logging.getLogger(__name__)
-logger.formatter = formatter
+
+logger.addHandler(handler)
 
 app.state.BUILDINGS_PLACED = []
 app.state.ROBOT_IS_MOVING = False
@@ -44,7 +48,11 @@ def manage_light(action: LightAction, light: Light, blocking: bool = True):
     def callback():
         logger.warning(f"Managing light '{light.name}' with action '{action.value}'")
         try:
-            urlopen(f"{light.value}/cm?cmnd=Power%20{action.value}").read()
+            urlopen(
+                url=f"{light.value}/cm?cmnd=Power%20{action.value}",
+                timeout=3
+            ).read()
+            logger.warning(f"Light '{light.name}' successfully managed")
         except Exception as e:
             logger.error(f"Error managing light '{light.name}': {e}")
 
