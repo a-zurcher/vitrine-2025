@@ -43,7 +43,10 @@ class Light(StrEnum):
 def manage_light(action: LightAction, light: Light, blocking: bool = True):
     def callback():
         logger.warning(f"Managing light '{light.name}' with action '{action.value}'")
-        urlopen(f"{light.value}/cm?cmnd=Power%20{action.value}").read()
+        try:
+            urlopen(f"{light.value}/cm?cmnd=Power%20{action.value}").read()
+        except TimeoutError as e:
+            logger.error(f"Error managing light '{light.name}': {e}")
 
     if blocking:
         callback()
