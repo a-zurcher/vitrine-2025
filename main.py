@@ -45,7 +45,7 @@ def manage_light(action: LightAction, light: Light, blocking: bool = True):
         logger.warning(f"Managing light '{light.name}' with action '{action.value}'")
         try:
             urlopen(f"{light.value}/cm?cmnd=Power%20{action.value}").read()
-        except TimeoutError as e:
+        except Exception as e:
             logger.error(f"Error managing light '{light.name}': {e}")
 
     if blocking:
